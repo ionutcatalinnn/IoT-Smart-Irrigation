@@ -1,0 +1,238 @@
+﻿@page "/"
+@using Microsoft.AspNetCore.SignalR.Client
+@using MudBlazor
+@using SistemIrigare.Models
+@using SistemIrigare.Data
+@using Microsoft.EntityFrameworkCore
+@inject NavigationManager Navigation
+@inject AppDbContext Db
+
+<MudContainer MaxWidth="MaxWidth.Large" Class="mt-4">
+    <MudText Typo="Typo.h3" Align="Align.Center" GutterBottom="true">Monitorizare Seră</MudText>
+
+    <MudGrid>
+        @* Card Umiditate Sol *@
+        <MudItem xs="12" sm="6" md="3">
+            <MudCard Elevation="3">
+                <MudCardHeader>
+                    <CardHeaderContent>
+                        <MudText Typo="Typo.h6">Umiditate Sol</MudText>
+                    </CardHeaderContent>
+                </MudCardHeader>
+                <MudCardContent>
+                    <MudText Typo="Typo.h3" Color="@CuloareUmiditate()">@DateCurente.UmiditateSol%</MudText>
+                </MudCardContent>
+            </MudCard>
+        </MudItem>
+
+        @* Card Temperatura *@
+        <MudItem xs="12" sm="6" md="3">
+            <MudCard Elevation="3">
+                <MudCardHeader>
+                    <CardHeaderContent>
+                        <MudText Typo="Typo.h6">Temperatură</MudText>
+                    </CardHeaderContent>
+                </MudCardHeader>
+                <MudCardContent>
+                    <MudText Typo="Typo.h3">@DateCurente.Temperatura °C</MudText>
+                </MudCardContent>
+            </MudCard>
+        </MudItem>
+
+        @* Card Umiditate Aer *@
+        <MudItem xs="12" sm="6" md="3">
+            <MudCard Elevation="3">
+                <MudCardHeader>
+                    <CardHeaderContent>
+                        <MudText Typo="Typo.h6">Umiditate Aer</MudText>
+                    </CardHeaderContent>
+                </MudCardHeader>
+                <MudCardContent>
+                    <MudText Typo="Typo.h3">@DateCurente.UmiditateAer%</MudText>
+                </MudCardContent>
+            </MudCard>
+        </MudItem>
+
+        @* Card Stare Ploaie *@
+        <MudItem xs="12" sm="6" md="3">
+            <MudCard Elevation="3">
+                <MudCardHeader>
+                    <CardHeaderContent>
+                        <MudText Typo="Typo.h6">Ploaie</MudText>
+                    </CardHeaderContent>
+                </MudCardHeader>
+                <MudCardContent>
+                    <MudText Typo="Typo.h3" Color="@(DateCurente.Ploaie ? Color.Info : Color.Default)">
+                        @(DateCurente.Ploaie ? "DA" : "NU")
+                    </MudText>
+                </MudCardContent>
+            </MudCard>
+        </MudItem>
+    </MudGrid>
+
+    @* Panoul de control cu switch si Stop Urgenta *@
+    <MudPaper Class="pa-4 mt-6" Elevation="3">
+        <MudGrid>
+            @* Comutator Auto/Manual *@
+            <MudItem xs="12" sm="4" Class="d-flex align-center">
+                <MudSwitch T="bool" Color="Color.Primary" 
+                           Label="@(EsteModAuto ? "Mod: AUTOMAT" : "Mod: MANUAL")" 
+                           Checked="EsteModAuto" 
+                           CheckedChanged="ComutaModAuto" />
+            </MudItem>
+
+            @* Buton Pornire/Oprire normala (activ doar pe manual) *@
+            <MudItem xs="12" sm="4" Class="d-flex justify-center align-center">
+                <MudButton Variant="Variant.Filled" 
+                           Color="@(DateCurente.PompaActiva ? Color.Error : Color.Success)" 
+                           Size="Size.Large"
+                           OnClick="ComutaPompa"
+                           Disabled="EsteModAuto">
+                    @(DateCurente.PompaActiva ? "OPREȘTE POMPA" : "PORNEȘTE POMPA")
+                </MudButton>
+            </MudItem>
+
+            @* Buton Stop Urgenta *@
+            <MudItem xs="12" sm="4" Class="d-flex justify-end align-center">
+                <MudButton Variant="Variant.Filled" 
+                           Color="Color.Dark" 
+                           Size="Size.Large" 
+                           OnClick="OpresteUrgenta">
+                    STOP URGENȚĂ
+                </MudButton>
+            </MudItem>
+        </MudGrid>
+    </MudPaper>
+
+    @* Tabel Istoric Irigari *@
+    <MudPaper Class="pa-4 mt-6" Elevation="3">
+        <MudText Typo="Typo.h5" GutterBottom="true">Istoric Irigări</MudText>
+        <MudTable Items="@IstoricIrigari" Hover="true" Striped="true" Dense="true">
+            <HeaderContent>
+                <MudTh>Pornire</MudTh>
+                <MudTh>Oprire</MudTh>
+                <MudTh>Durată</MudTh>
+                <MudTh>Motiv</MudTh>
+                <MudTh>Stare</MudTh>
+            </HeaderContent>
+            <RowTemplate>
+                <MudTd>@context.TimpStart.ToString("dd.MM.yyyy HH:mm:ss")</MudTd>
+                <MudTd>@(context.TimpStop.HasValue ? context.TimpStop.Value.ToString("dd.MM.yyyy HH:mm:ss") : "-")</MudTd>
+                <MudTd>@GetDurata(context)</MudTd>
+                <MudTd>@context.Motiv</MudTd>
+                <MudTd>
+                    <MudChip Color="@(context.EsteActiv ? Color.Success : Color.Default)" 
+                             Size="Size.Small">
+                        @(context.EsteActiv ? "Activ" : "Finalizat")
+                    </MudChip>
+                </MudTd>
+            </RowTemplate>
+            <NoRecordsContent>
+                <MudText>Nu există evenimente de irigare înregistrate.</MudText>
+            </NoRecordsContent>
+        </MudTable>
+    </MudPaper>
+
+</MudContainer>
+
+@code {
+    private HubConnection? hubConnection;
+    private SenzorDate DateCurente = new SenzorDate();
+    private bool EsteModAuto = true;
+    private List<IrigareEvent> IstoricIrigari = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        // Ne conectam la SignalR pentru date live
+        hubConnection = new HubConnectionBuilder()
+            .WithUrl(Navigation.ToAbsoluteUri("/irigarehub"))
+            .Build();
+
+        // Ce facem cand ESP32 trimite date noi
+        hubConnection.On<SenzorDate>("PrimesteDateLive", async (dateNoi) =>
+        {
+            DateCurente = dateNoi;
+            await IncarcaIstoric();
+            await InvokeAsync(StateHasChanged);
+        });
+
+        // Ascultam schimbarile de stare din Hub
+        hubConnection.On<bool>("ModAutoSchimbat", (stareNoua) =>
+        {
+            EsteModAuto = stareNoua;
+            InvokeAsync(StateHasChanged);
+        });
+
+        hubConnection.On<bool>("ComandaPompa", (stareNoua) =>
+        {
+            DateCurente.PompaActiva = stareNoua;
+            InvokeAsync(StateHasChanged);
+        });
+
+        await hubConnection.StartAsync();
+
+        // Incarca istoricul la pornire
+        await IncarcaIstoric();
+    }
+
+    private async Task IncarcaIstoric()
+    {
+        IstoricIrigari = await Db.IrigareEvents
+            .OrderByDescending(e => e.TimpStart)
+            .Take(50)
+            .ToListAsync();
+    }
+
+    private string GetDurata(IrigareEvent ev)
+    {
+        var stop = ev.TimpStop ?? DateTime.Now;
+        var durata = stop - ev.TimpStart;
+        if (durata.TotalHours >= 1)
+            return $"{(int)durata.TotalHours}h {durata.Minutes}m";
+        if (durata.TotalMinutes >= 1)
+            return $"{(int)durata.TotalMinutes}m {durata.Seconds}s";
+        return $"{durata.Seconds}s";
+    }
+
+    private async Task ComutaPompa()
+    {
+        // Trimitem comanda doar daca suntem pe Manual
+        if (hubConnection is not null && !EsteModAuto)
+        {
+            bool comandaNoua = !DateCurente.PompaActiva;
+            await hubConnection.SendAsync("SchimbaStarePompa", comandaNoua);
+            DateCurente.PompaActiva = comandaNoua;
+        }
+    }
+
+    private async Task ComutaModAuto(bool mod)
+    {
+        if (hubConnection is not null)
+        {
+            await hubConnection.SendAsync("SchimbaModAuto", mod);
+        }
+    }
+
+    private async Task OpresteUrgenta()
+    {
+        if (hubConnection is not null)
+        {
+            await hubConnection.SendAsync("OpresteUrgenta");
+        }
+    }
+
+    private Color CuloareUmiditate()
+    {
+        if (DateCurente.UmiditateSol < 45) return Color.Error;
+        if (DateCurente.UmiditateSol > 80) return Color.Info;
+        return Color.Success;
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        if (hubConnection is not null)
+        {
+            await hubConnection.DisposeAsync();
+        }
+    }
+}
